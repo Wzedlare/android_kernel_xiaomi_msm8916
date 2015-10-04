@@ -203,6 +203,7 @@ enum hal_property {
 	HAL_PARAM_VENC_DISABLE_RC_TIMESTAMP,
 	HAL_PARAM_VENC_ENABLE_INITIAL_QP,
 	HAL_PARAM_VENC_SEARCH_RANGE,
+	HAL_PARAM_VDEC_NON_SECURE_OUTPUT2,
 };
 
 enum hal_domain {
@@ -784,6 +785,7 @@ enum hal_capability {
 	HAL_CAPABILITY_SCALE_X,
 	HAL_CAPABILITY_SCALE_Y,
 	HAL_CAPABILITY_BITRATE,
+	HAL_CAPABILITY_SECURE_OUTPUT2_THRESHOLD,
 	HAL_UNUSED_CAPABILITY = 0x10000000,
 };
 
@@ -1174,6 +1176,7 @@ struct vidc_hal_session_init_done {
 	struct hal_capability_supported bitrate;
 	struct hal_capability_supported hier_p;
 	struct hal_capability_supported ltr_count;
+	struct hal_capability_supported secure_output2_threshold;
 	struct hal_uncompressed_format_supported uncomp_format;
 	struct hal_interlace_format_supported HAL_format;
 	struct hal_nal_stream_format_supported nal_stream_format;
