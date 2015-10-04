@@ -1765,6 +1765,17 @@ int create_pkt_cmd_session_set_property(
 			sizeof(struct hfi_initial_quantization);
 		break;
 	}
+	case HAL_PARAM_VENC_VPX_ERROR_RESILIENCE_MODE:
+	{
+		struct hfi_enable *hfi;
+		struct hal_enable *err_res = pdata;
+		pkt->rg_property_data[0] =
+			HFI_PROPERTY_PARAM_VENC_VPX_ERROR_RESILIENCE_MODE;
+		hfi = (struct hfi_enable *)&pkt->rg_property_data[1];
+		hfi->enable = err_res->enable;
+		pkt->size += sizeof(u32) + sizeof(struct hfi_enable);
+		break;
+	}
 	case HAL_PARAM_VDEC_NON_SECURE_OUTPUT2:
 	{
 		struct hfi_enable *hfi;
