@@ -44,19 +44,6 @@
 			avago,ga-value = <48>;
 		};
 
-		akm@c {
-			compatible = "ak,ak8963";
-			reg = <0x0c>;
-			pinctrl-names = "ak8963_default", "ak8963_sleep";
-			pinctrl-0 = <&ak8963_default>;
-			pinctrl-1 = <&ak8963_sleep>;
-			interrupt-parent = <&msm_gpio>;
-			interrupts = <69 0x2>;
-			vdd-supply = <&vph_pwr_vreg>;
-			vio-supply = <&vph_pwr_vreg>;
-			ak,layout = <0x6>;
-			ak,auto-report;
-		};
 	};
 
     spi_0 { /* BLSP1 QUP3 */
