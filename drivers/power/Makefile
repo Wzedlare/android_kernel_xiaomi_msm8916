@@ -50,6 +50,7 @@ obj-$(CONFIG_CHARGER_MANAGER)	+= charger-manager.o
 obj-$(CONFIG_CHARGER_MAX8997)	+= max8997_charger.o
 obj-$(CONFIG_CHARGER_MAX8998)	+= max8998_charger.o
 obj-$(CONFIG_CHARGER_BQ2415X)	+= bq2415x_charger.o
+obj-$(CONFIG_BATTERY_BQ2022A)   += bq2022a.o
 obj-$(CONFIG_POWER_AVS)		+= avs/
 obj-$(CONFIG_SMB349_USB_CHARGER)   += smb349-charger.o
 obj-$(CONFIG_SMB350_CHARGER)   += smb350_charger.o
