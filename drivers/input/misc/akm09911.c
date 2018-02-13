@@ -2,6 +2,7 @@
  *
  * Copyright (c) 2014-2015, Linux Foundation. All rights reserved.
  * Copyright (C) 2007-2008 HTC Corporation.
+ * Copyright (C) 2016 XiaoMi, Inc.
  * Author: Hou-Kun Chen <houkun.chen@gmail.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -35,6 +36,8 @@
 #include <linux/regulator/consumer.h>
 #include <linux/of_gpio.h>
 #include <linux/sensors.h>
+
+#define AKM_MAG_CALIBRATION	1
 
 #define AKM_DEBUG_IF			0
 #define AKM_HAS_RESET			1
@@ -105,6 +108,9 @@ struct akm_compass_data {
 	int	gpio_rstn;
 	int	power_enabled;
 	int	auto_report;
+#ifdef AKM_MAG_CALIBRATION
+	int	reset_calibrate;
+#endif
 	int	use_hrtimer;
 
 	/* The input event last time */
@@ -119,8 +125,8 @@ struct akm_compass_data {
 };
 
 static struct sensors_classdev sensors_cdev = {
-	.name = "akm09911-mag",
-	.vendor = "Asahi Kasei Microdevices Corporation",
+	.name = "magnetism",
+	.vendor = "akm09911-Asahi Kasei Microdevices Corporation",
 	.version = 1,
 	.handle = SENSORS_MAGNETIC_FIELD_HANDLE,
 	.type = SENSOR_TYPE_MAGNETIC_FIELD,
@@ -135,6 +141,9 @@ static struct sensors_classdev sensors_cdev = {
 	.delay_msec = 10,
 	.sensors_enable = NULL,
 	.sensors_poll_delay = NULL,
+#ifdef AKM_MAG_CALIBRATION
+	.sensors_self_test = NULL,
+#endif
 };
 
 static struct akm_compass_data *s_akm;
@@ -146,7 +155,8 @@ static int akm_i2c_rxdata(
 	uint8_t *rxData,
 	int length)
 {
-	int ret;
+	int ret = 0;
+	int retry;
 
 	struct i2c_msg msgs[] = {
 		{
@@ -164,20 +174,23 @@ static int akm_i2c_rxdata(
 	};
 	uint8_t addr = rxData[0];
 
-	ret = i2c_transfer(i2c->adapter, msgs, ARRAY_SIZE(msgs));
-	if (ret < 0) {
-		dev_err(&i2c->dev, "%s: transfer failed.", __func__);
-		return ret;
-	} else if (ret != ARRAY_SIZE(msgs)) {
-		dev_err(&i2c->dev, "%s: transfer failed(size error).\n",
-				__func__);
-		return -ENXIO;
+	for (retry = 0; retry < 10; retry++) {
+		ret = i2c_transfer(i2c->adapter, msgs, ARRAY_SIZE(msgs));
+		if (ret < 0) {
+			dev_err(&i2c->dev, "%s: transfer failed.", __func__);
+		} else if (ret != ARRAY_SIZE(msgs)) {
+			dev_err(&i2c->dev, "%s: transfer failed(size error).\n",
+					__func__);
+			ret = -ENXIO;
+		} else
+			break;
+		usleep(200);
 	}
 
 	dev_vdbg(&i2c->dev, "RxData: len=%02x, addr=%02x, data=%02x",
 		length, addr, rxData[0]);
 
-	return 0;
+	return ret;
 }
 
 static int akm_i2c_txdata(
@@ -285,8 +298,10 @@ static int AKECS_Reset(
 	mutex_lock(&akm->sensor_mutex);
 
 	if (hard != 0) {
+		gpio_set_value(akm->gpio_rstn, 1);
+		msleep(5);
 		gpio_set_value(akm->gpio_rstn, 0);
-		udelay(5);
+		msleep(1);
 		gpio_set_value(akm->gpio_rstn, 1);
 		/* No error is returned */
 		err = 0;
@@ -954,6 +969,12 @@ static ssize_t akm_compass_sysfs_enable_store(
 
 	akm_compass_sysfs_update_status(akm);
 
+	cancel_delayed_work_sync(&akm->dwork);
+	if (en)
+	schedule_delayed_work(&akm->dwork,
+		(unsigned long)nsecs_to_jiffies64(
+			akm->delay[MAG_DATA_FLAG]));
+
 exit:
 	mutex_unlock(&akm->op_mutex);
 
@@ -990,6 +1011,32 @@ static ssize_t akm_enable_mag_store(
 		dev_get_drvdata(dev), buf, count, MAG_DATA_FLAG);
 }
 
+#ifdef AKM_MAG_CALIBRATION
+static ssize_t akm_reset_calibrate_mag_show(
+	struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct akm_compass_data *akm = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%d\n", akm->reset_calibrate);
+}
+
+static ssize_t akm_reset_calibrate_mag_store(
+	struct device *dev, struct device_attribute *attr,
+	char const *buf, size_t count)
+{
+	struct akm_compass_data *akm = dev_get_drvdata(dev);
+	unsigned long val;
+	if (strict_strtoul(buf, 10, &val))
+		return -EINVAL;
+
+	mutex_lock(&akm->val_mutex);
+	akm->reset_calibrate = val;
+	mutex_unlock(&akm->val_mutex);
+
+	return count;
+}
+#endif
+
 /***** Fusion ***/
 static ssize_t akm_enable_fusion_show(
 	struct device *dev, struct device_attribute *attr, char *buf)
@@ -1025,6 +1072,21 @@ static int akm_poll_delay_set(struct sensors_classdev *sensors_cdev,
 	mutex_unlock(&akm->val_mutex);
 	return ret;
 }
+
+#ifdef AKM_MAG_CALIBRATION
+static int akm_self_calibration(struct sensors_classdev *sensors_cdev)
+{
+	struct akm_compass_data *akm = container_of(sensors_cdev,
+			struct akm_compass_data, cdev);
+
+	mutex_lock(&akm->val_mutex);
+	akm->reset_calibrate = 1;
+	printk("xelloss  set reset_calibrate = %d",akm->reset_calibrate);
+	mutex_unlock(&akm->val_mutex);
+
+	return 0;
+}
+#endif
 
 static ssize_t akm_compass_sysfs_delay_show(
 	struct akm_compass_data *akm, char *buf, int pos)
@@ -1247,17 +1309,40 @@ static struct device_attribute akm_compass_attributes[] = {
 	__ATTR(enable_mag, 0660, akm_enable_mag_show, akm_enable_mag_store),
 	__ATTR(enable_fusion, 0660, akm_enable_fusion_show,
 			akm_enable_fusion_store),
-	__ATTR(delay_acc,  0660, akm_delay_acc_show,  akm_delay_acc_store),
-	__ATTR(delay_mag,  0660, akm_delay_mag_show,  akm_delay_mag_store),
+	__ATTR(delay_acc, 0660, akm_delay_acc_show, akm_delay_acc_store),
+	__ATTR(delay_mag, 0660, akm_delay_mag_show, akm_delay_mag_store),
 	__ATTR(delay_fusion, 0660, akm_delay_fusion_show,
 			akm_delay_fusion_store),
 #if AKM_DEBUG_IF
-	__ATTR(mode,  0220, NULL, akm_sysfs_mode_store),
+	__ATTR(mode, 0220, NULL, akm_sysfs_mode_store),
 	__ATTR(bdata, 0440, akm_sysfs_bdata_show, NULL),
-	__ATTR(asa,   0440, akm_sysfs_asa_show, NULL),
-	__ATTR(regs,  0440, akm_sysfs_regs_show, NULL),
+	__ATTR(asa, 0440, akm_sysfs_asa_show, NULL),
+	__ATTR(regs, 0440, akm_sysfs_regs_show, NULL),
 #endif
 	__ATTR_NULL,
+};
+
+
+static DEVICE_ATTR(enable_mag, S_IRUGO|S_IWUSR|S_IWGRP, akm_enable_mag_show,
+				akm_enable_mag_store);
+static DEVICE_ATTR(delay_mag, S_IRUGO|S_IWUSR|S_IWGRP, akm_delay_mag_show,
+				akm_delay_mag_store);
+#ifdef AKM_MAG_CALIBRATION
+static DEVICE_ATTR(reset_calibrate, S_IRUGO|S_IWUSR|S_IWGRP, akm_reset_calibrate_mag_show,
+				akm_reset_calibrate_mag_store);
+#endif
+
+static struct attribute *akm_attributes[] = {
+		&dev_attr_enable_mag.attr,
+		&dev_attr_delay_mag.attr,
+#ifdef AKM_MAG_CALIBRATION
+		&dev_attr_reset_calibrate.attr,
+#endif
+		NULL,
+};
+
+static const struct attribute_group akm_attr_group = {
+		.attrs = akm_attributes,
 };
 
 #define __BIN_ATTR(name_, mode_, size_, private_, read_, write_) \
@@ -1404,14 +1489,14 @@ static int akm_compass_input_init(
 			0, 3, 0, 0);
 
 	/* Orientation (degree in Q6 format) */
-	/*  yaw[0,360) pitch[-180,180) roll[-90,90) */
+	/*  yaw[0, 360) pitch[-180, 180) roll[-90, 90) */
 	input_set_abs_params(*input, ABS_HAT0Y,
 			0, 23040, 0, 0);
 	input_set_abs_params(*input, ABS_HAT1X,
 			-11520, 11520, 0, 0);
 	input_set_abs_params(*input, ABS_HAT1Y,
 			-5760, 5760, 0, 0);
-	/* Rotation Vector [-1,+1] in Q14 format */
+	/* Rotation Vector [-1, +1] in Q14 format */
 	input_set_abs_params(*input, ABS_TILT_X,
 			-16384, 16384, 0, 0);
 	input_set_abs_params(*input, ABS_TILT_Y,
@@ -1427,6 +1512,8 @@ static int akm_compass_input_init(
 
 	/* Set name */
 	(*input)->name = AKM_INPUT_DEVICE_NAME;
+	(*input)->id.bustype = BUS_I2C;
+	(*input)->dev.parent = &s_akm->i2c->dev;
 
 	/* Register */
 	err = input_register_device(*input);
@@ -1582,7 +1669,7 @@ static int akm09911_i2c_check_device(
 
 	/* Check read data */
 	if ((akm->sense_info[0] != AK09911_WIA1_VALUE) ||
-			(akm->sense_info[1] != AK09911_WIA2_VALUE)){
+			(akm->sense_info[1] != AK09911_WIA2_VALUE)) {
 		dev_err(&client->dev,
 			"%s: The device is not AKM Compass.", __func__);
 		return -ENXIO;
@@ -1728,9 +1815,9 @@ static int akm_compass_parse_dt(struct device *dev,
 	u32 temp_val;
 	int rc;
 
-	rc = of_property_read_u32(np, "akm,layout", &temp_val);
+	rc = of_property_read_u32(np, "akm, layout", &temp_val);
 	if (rc && (rc != -EINVAL)) {
-		dev_err(dev, "Unable to read akm,layout\n");
+		dev_err(dev, "Unable to read akm, layout\n");
 		return rc;
 	} else {
 		akm->layout = temp_val;
@@ -1739,12 +1826,32 @@ static int akm_compass_parse_dt(struct device *dev,
 	akm->auto_report = of_property_read_bool(np, "akm,auto-report");
 	akm->use_hrtimer = of_property_read_bool(np, "akm,use-hrtimer");
 	akm->gpio_rstn = of_get_named_gpio_flags(dev->of_node,
-			"akm,gpio_rstn", 0, NULL);
+			"akm, gpio_rstn", 0, NULL);
 
-	if (!gpio_is_valid(akm->gpio_rstn)) {
+	if (gpio_is_valid(s_akm->gpio_rstn)) {
+		/* configure touchscreen reset out gpio */
+		rc = gpio_request(s_akm->gpio_rstn,
+				"akm_reset_gpio");
+		if (rc) {
+			dev_err(dev,
+				"%s unable to request gpio [%d]\n", __func__,
+				s_akm->gpio_rstn);
+			return -EINVAL;
+		}
+
+		rc = gpio_direction_output(s_akm->gpio_rstn, 1);
+		if (rc) {
+			dev_err(dev,
+				"%s unable to set direction for gpio[%d]\n", __func__, s_akm->gpio_rstn);
+			return -EINVAL;
+		}
+
+		gpio_set_value(s_akm->gpio_rstn, 1);
+		msleep(1);
+	} else {
 		dev_err(dev, "gpio reset pin %d is invalid.\n",
 			akm->gpio_rstn);
-		return -EINVAL;
+	return -EINVAL;
 	}
 
 	return 0;
@@ -1890,7 +1997,7 @@ static void akm_dev_poll(struct work_struct *work)
 	int ret;
 
 	akm = container_of((struct delayed_work *)work,
-			struct akm_compass_data,  dwork);
+			struct akm_compass_data, dwork);
 
 	ret = akm_report_data(akm);
 	if (ret < 0)
@@ -2146,6 +2253,10 @@ int akm_compass_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	atomic_set(&s_akm->active, 0);
 	atomic_set(&s_akm->drdy, 0);
 
+
+#ifdef AKM_MAG_CALIBRATION
+	s_akm->reset_calibrate = 0;
+#endif
 	s_akm->enable_flag = 0;
 
 	/* Set to 1G in Android coordination, AKSC format */
@@ -2193,9 +2304,6 @@ int akm_compass_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		}
 	}
 
-	/* Pull up the reset pin */
-	AKECS_Reset(s_akm, 1);
-
 	/* check connection */
 	err = akm_compass_power_init(s_akm, 1);
 	if (err < 0)
@@ -2203,6 +2311,9 @@ int akm_compass_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	err = akm_compass_power_set(s_akm, 1);
 	if (err < 0)
 		goto exit3;
+
+	/* Pull up the reset pin */
+	err = AKECS_Reset(s_akm, 1);
 
 	err = akm09911_i2c_check_device(client);
 	if (err < 0)
@@ -2267,10 +2378,22 @@ int akm_compass_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		goto exit7;
 	}
 
+	s_akm->input->dev.parent = &s_akm->i2c->dev;
+	err = sysfs_create_group(&client->dev.kobj, &akm_attr_group);
+	if (err) {
+		err = -EROFS;
+		dev_err(&client->dev, "Unable to creat sysfs group\n");
+		goto exit8;
+	}
+
 	s_akm->cdev = sensors_cdev;
 	s_akm->cdev.sensors_enable = akm_enable_set;
 	s_akm->cdev.sensors_poll_delay = akm_poll_delay_set;
 	s_akm->cdev.sensors_self_test = akm_self_test;
+
+#ifdef AKM_MAG_CALIBRATION
+	s_akm->cdev.sensors_self_test = akm_self_calibration;
+#endif
 
 	s_akm->delay[MAG_DATA_FLAG] = sensors_cdev.delay_msec * 1000000;
 
@@ -2278,7 +2401,7 @@ int akm_compass_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 	if (err) {
 		dev_err(&client->dev, "class device create failed: %d\n", err);
-		goto exit8;
+		goto exit9;
 	}
 
 	akm_compass_power_set(s_akm, false);
@@ -2286,6 +2409,8 @@ int akm_compass_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	dev_info(&client->dev, "successfully probed.");
 	return 0;
 
+exit9:
+	sysfs_remove_group(&client->dev.kobj, &akm_attr_group);
 exit8:
 	remove_sysfs_interfaces(s_akm);
 exit7:
@@ -2331,6 +2456,8 @@ static int akm_compass_remove(struct i2c_client *client)
 	if (akm->irq)
 		free_irq(akm->irq, akm);
 	input_unregister_device(akm->input);
+	remove_sysfs_interfaces(s_akm);
+	sysfs_remove_group(&client->dev.kobj, &akm_attr_group);
 	kfree(akm);
 	dev_info(&client->dev, "successfully removed.");
 	return 0;
@@ -2382,4 +2509,3 @@ module_exit(akm_compass_exit);
 MODULE_AUTHOR("viral wang <viral_wang@htc.com>");
 MODULE_DESCRIPTION("AKM compass driver");
 MODULE_LICENSE("GPL");
-

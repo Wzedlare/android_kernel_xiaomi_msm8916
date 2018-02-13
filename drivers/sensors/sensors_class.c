@@ -469,7 +469,7 @@ static struct device_attribute sensors_class_attrs[] = {
 	__ATTR(enable_wakeup, 0664, sensors_enable_wakeup_show,
 			sensors_enable_wakeup_store),
 	__ATTR(poll_delay, 0664, sensors_delay_show, sensors_delay_store),
-	__ATTR(self_test, 0440, sensors_test_show, NULL),
+	__ATTR(self_test, 0444, sensors_test_show, NULL),
 	__ATTR(max_latency, 0660, sensors_max_latency_show,
 			sensors_max_latency_store),
 	__ATTR(flush, 0660, sensors_flush_show, sensors_flush_store),
