@@ -22,6 +22,9 @@
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 
+static int vana_cnt = 0;
+static int vdig_cnt = 0;
+
 int msm_camera_fill_vreg_params(struct camera_vreg_t *cam_vreg,
 	int num_vreg, struct msm_sensor_power_setting *power_setting,
 	uint16_t power_setting_size)
@@ -1296,6 +1299,10 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 			CDBG("%s:%d gpio set val %d\n", __func__, __LINE__,
 				ctrl->gpio_conf->gpio_num_info->gpio_num
 				[power_setting->seq_val]);
+			if (power_setting->seq_val == SENSOR_GPIO_VANA)
+				vana_cnt++;
+			if (power_setting->seq_val == SENSOR_GPIO_VDIG)
+				vdig_cnt++;
 			gpio_set_value_cansleep(
 				ctrl->gpio_conf->gpio_num_info->gpio_num
 				[power_setting->seq_val],
@@ -1483,6 +1490,16 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 			if (!ctrl->gpio_conf->gpio_num_info->valid
 				[pd->seq_val])
 				continue;
+			if (pd->seq_val == SENSOR_GPIO_VANA) {
+				vana_cnt--;
+				if (vana_cnt != 0)
+					continue;
+			}
+			if (pd->seq_val == SENSOR_GPIO_VDIG) {
+				vdig_cnt--;
+				if (vdig_cnt != 0)
+					continue;
+			}
 			gpio_set_value_cansleep(
 				ctrl->gpio_conf->gpio_num_info->gpio_num
 				[pd->seq_val],

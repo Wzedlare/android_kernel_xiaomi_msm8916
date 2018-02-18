@@ -23,6 +23,7 @@
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 
 #define SENSOR_MAX_MOUNTANGLE (360)
+extern int mid;
 
 static struct v4l2_file_operations msm_sensor_v4l2_subdev_fops;
 
@@ -626,6 +627,72 @@ static void msm_sensor_fill_sensor_info(struct msm_sensor_ctrl_t *s_ctrl,
 	strlcpy(entity_name, s_ctrl->msm_sd.sd.entity.name, MAX_SENSOR_NAME);
 }
 
+#define FACTORY_SENSOR_INFO
+#ifdef FACTORY_SENSOR_INFO
+static struct kobject *msm_sensor_device = NULL;
+static char module_info[80] = {0};
+void msm_sensor_set_module_info(struct msm_sensor_ctrl_t *s_ctrl)
+{
+		CDBG(" s_ctrl->sensordata->camera_type = %d\n", s_ctrl->sensordata->sensor_info->position);
+		switch (s_ctrl->sensordata->sensor_info->position) {
+		case BACK_CAMERA_B:
+			strcat(module_info, "back: ");
+			break;
+		case FRONT_CAMERA_B:
+			strcat(module_info, "front: ");
+			break;
+		default:
+			strcat(module_info, "unknown: ");
+			break;
+		}
+
+		printk("%s: sensor_name=%s\n", __func__, s_ctrl->sensordata->sensor_name);
+		if (!strcmp(s_ctrl->sensordata->sensor_name, "s5k3l2"))
+			strcat(module_info, "s5k3l2_ofilm");
+		else if (!strcmp(s_ctrl->sensordata->sensor_name, "ov5693")) {
+			if (mid == 0x7)
+				strcat(module_info, "ov5693_ofilm");
+			else if (mid == 0x1)
+				strcat(module_info, "ov5693_sny");
+			else
+				printk("%s: ofilm module but wrong module id=%d\n", __func__, mid);
+		} else
+			strcat(module_info, s_ctrl->sensordata->sensor_name);
+		strcat(module_info, "\n");
+}
+static ssize_t msm_sensor_module_id_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	ssize_t rc = 0;
+	sprintf(buf, "%s\n", module_info);
+	rc = strlen(buf) + 1;
+	return rc;
+}
+static DEVICE_ATTR(sensor, 0444, msm_sensor_module_id_show, NULL);
+int32_t msm_sensor_init_device_name(void)
+{
+	int32_t rc = 0;
+	pr_err("%s %d\n", __func__, __LINE__);
+	if (msm_sensor_device != NULL) {
+		pr_err("Macle android_camera already created\n");
+		return 0;
+	}
+	msm_sensor_device = kobject_create_and_add("android_camera", NULL);
+	if (msm_sensor_device == NULL) {
+		printk("%s: subsystem_register failed\n", __func__);
+		rc = -ENOMEM;
+		return rc ;
+	}
+	rc = sysfs_create_file(msm_sensor_device, &dev_attr_sensor.attr);
+	if (rc) {
+		printk("%s: sysfs_create_file failed\n", __func__);
+		kobject_del(msm_sensor_device);
+	}
+	return 0 ;
+}
+
+#endif
+
 /* static function definition */
 int32_t msm_sensor_driver_is_special_support(
 	struct msm_sensor_ctrl_t *s_ctrl,
@@ -903,7 +970,14 @@ int32_t msm_sensor_driver_probe(void *setting,
 		goto free_camera_info;
 	}
 
-	pr_err("%s probe succeeded", slave_info->sensor_name);
+	if (!strcmp(slave_info->sensor_name, "ov5693")) {
+		if (mid != 0x7) {
+			pr_err("match o-film vendor id failed: %d\n", mid);
+			goto camera_power_down;
+		}
+	}
+
+	pr_err("%s: %s probe succeeded\n", __func__, slave_info->sensor_name);
 
 	/*
 	 * Update the subdevice id of flash-src based on availability in kernel.
@@ -956,7 +1030,8 @@ int32_t msm_sensor_driver_probe(void *setting,
 	s_ctrl->sensordata->cam_slave_info = slave_info;
 
 	msm_sensor_fill_sensor_info(s_ctrl, probed_info, entity_name);
-
+	msm_sensor_init_device_name();
+	msm_sensor_set_module_info(s_ctrl);
 	/*
 	 * Set probe succeeded flag to 1 so that no other camera shall
 	 * probed on this slot

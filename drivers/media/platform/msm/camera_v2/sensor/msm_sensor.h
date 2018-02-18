@@ -113,6 +113,8 @@ int32_t msm_sensor_get_dt_gpio_set_tbl(struct device_node *of_node,
 int32_t msm_sensor_init_gpio_pin_tbl(struct device_node *of_node,
 	struct msm_camera_gpio_conf *gconf, uint16_t *gpio_array,
 	uint16_t gpio_array_size);
+int32_t msm_sensor_init_device_name(void);
+void msm_sensor_set_module_info(struct msm_sensor_ctrl_t *s_ctrl);
 #ifdef CONFIG_COMPAT
 long msm_sensor_subdev_fops_ioctl(struct file *file,
 	unsigned int cmd,
