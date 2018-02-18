@@ -519,11 +519,18 @@ config LEDS_BLINKM
 	  through I2C. Say Y to enable support for the BlinkM LED.
 
 config LEDS_AW2013
-	tristate "LED support for AW2013"
-	depends on LEDS_CLASS && I2C
+	tristate "LED driver for AW2013 RGB LED"
+	depends on LEDS_CLASS
+	depends on REGULATOR
 	help
-	  This option enables support for the AW2013 RGB LED connected
-	  through I2C. Say Y to enable support for the AW2013 LED.
+	  This option enables support for AW2013 RGB LED driver chips
+	  accessed via the I2C bus.
+
+config SET_AW2013_VCC_AND_NOT_PULLDWN
+	bool "SET VCC for aw2013 and not pull down"
+	depends on LEDS_AW2013
+	help
+	  This option enables support for set vdd
 
 comment "LED Triggers"
 source "drivers/leds/trigger/Kconfig"
