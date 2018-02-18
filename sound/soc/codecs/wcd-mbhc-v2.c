@@ -35,9 +35,7 @@
 			   SND_JACK_OC_HPHR | SND_JACK_LINEOUT | \
 			   SND_JACK_UNSUPPORTED | SND_JACK_MECHANICAL)
 #define WCD_MBHC_JACK_BUTTON_MASK (SND_JACK_BTN_0 | SND_JACK_BTN_1 | \
-				  SND_JACK_BTN_2 | SND_JACK_BTN_3 | \
-				  SND_JACK_BTN_4 | SND_JACK_BTN_5 | \
-				  SND_JACK_BTN_6 | SND_JACK_BTN_7)
+				  SND_JACK_BTN_2)
 #define OCP_ATTEMPT 1
 #define HS_DETECT_PLUG_TIME_MS (3 * 1000)
 #define SPECIAL_HS_DETECT_TIME_MS (2 * 1000)
@@ -1434,7 +1432,7 @@ static int wcd_mbhc_get_button_mask(struct wcd_mbhc *mbhc)
 	default:
 		break;
 	}
-
+	pr_debug("%s : mask = %d, btn = %d \n", __func__, mask, btn);
 	return mask;
 }
 
@@ -1688,8 +1686,6 @@ static irqreturn_t wcd_mbhc_btn_press_handler(int irq, void *data)
 	complete(&mbhc->btn_press_compl);
 	WCD_MBHC_RSC_LOCK(mbhc);
 	/* send event to sw intr handler*/
-	mbhc->is_btn_press = true;
-	wcd_cancel_btn_work(mbhc);
 	if (wcd_swch_level_remove(mbhc)) {
 		pr_debug("%s: Switch level is low ", __func__);
 		goto done;
@@ -1714,13 +1710,17 @@ static irqreturn_t wcd_mbhc_btn_press_handler(int irq, void *data)
 				__func__);
 		goto done;
 	}
+	mbhc->is_btn_press = true;
+	wcd_cancel_btn_work(mbhc);
 	mask = wcd_mbhc_get_button_mask(mbhc);
 	mbhc->buttons_pressed |= mask;
 	mbhc->mbhc_cb->lock_sleep(mbhc, true);
-	if (schedule_delayed_work(&mbhc->mbhc_btn_dwork,
+	if (mbhc->buttons_pressed & WCD_MBHC_JACK_BUTTON_MASK) {
+		if (schedule_delayed_work(&mbhc->mbhc_btn_dwork,
 				msecs_to_jiffies(400)) == 0) {
-		WARN(1, "Button pressed twice without release event\n");
-		mbhc->mbhc_cb->lock_sleep(mbhc, false);
+			WARN(1, "Button pressed twice without release event\n");
+			mbhc->mbhc_cb->lock_sleep(mbhc, false);
+		}
 	}
 done:
 	pr_debug("%s: leave\n", __func__);
@@ -2185,6 +2185,14 @@ int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_codec *codec,
 		ret = snd_jack_set_key(mbhc->button_jack.jack,
 				       SND_JACK_BTN_0,
 				       KEY_MEDIA);
+
+		ret = ret & snd_jack_set_key(mbhc->button_jack.jack,
+				       SND_JACK_BTN_1,
+				       KEY_NEXTSONG);
+		ret = ret & snd_jack_set_key(mbhc->button_jack.jack,
+				       SND_JACK_BTN_2,
+				       KEY_PREVIOUSSONG);
+
 		if (ret) {
 			pr_err("%s: Failed to set code for btn-0\n",
 				__func__);
